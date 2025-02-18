@@ -2,11 +2,20 @@
 
 RED="\033[31m"      # Error message
 GREEN="\033[32m"    # Success message
+YELLOW="\033[33m"   # Warning message
+BLUE="\033[36m"     # Info message
 PLAIN='\033[0m'
 
 NAME="shadowsocks-libev"
 CONFIG_FILE="/etc/${NAME}/config.json"
 SERVICE_FILE="/etc/systemd/system/${NAME}.service"
+
+V6_PROXY=""
+IP=$(curl -sL -4 ip.sb)
+if [[ "$?" != "0" ]]; then
+    IP=$(curl -sL -6 ip.sb)
+    V6_PROXY="https://gh.hijk.art/"
+fi
 
 colorEcho() {
     echo -e "${1}${@:2}${PLAIN}"
@@ -43,6 +52,7 @@ configSS() {
     "timeout": 600,
     "method": "aes-256-gcm",
     "mode": "tcp_and_udp",
+    "nameserver":"8.8.8.8",
     "fast_open": true
 }
 EOF
@@ -75,20 +85,20 @@ installBBR() {
 }
 
 showInfo() {
-    IP=$(curl -sL -4 ip.sb)
     colorEcho $GREEN " Shadowsocks-libev 已安装并启动成功！"
     echo " 配置信息如下："
     echo " IP: $IP"
     echo " 端口: 1111"
     echo " 密码: dm66887777"
     echo " 加密方式: aes-256-gcm"
+}
 
-    # Generate QR Code
+showQR() {
     LINK="ss://$(echo -n "aes-256-gcm:dm66887777@${IP}:1111" | base64 -w 0)"
-    QR_FILE="/root/${IP}_ss_protocol.png"
+    QR_FILE="/root/ss_protocol.png"
     qrencode -o "$QR_FILE" "$LINK"
-    echo " 二维码已生成，路径为：$QR_FILE"
-    echo " 二维码链接: $LINK"
+    colorEcho $GREEN " 二维码已生成，路径为：$QR_FILE"
+    colorEcho $GREEN " 二维码链接: $LINK"
 }
 
 main() {
@@ -98,6 +108,7 @@ main() {
     createService
     installBBR
     showInfo
+    showQR
 }
 
 main
