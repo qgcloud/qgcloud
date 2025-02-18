@@ -45,6 +45,7 @@ install_ss() {
 # 配置 Shadowsocks
 config_ss() {
     echo -e "${Info} 配置 Shadowsocks..."
+    local public_ip=$(curl -s https://api.ipify.org)  # 获取公网IP
     cat > /etc/shadowsocks.json <<EOF
 {
     "server": "0.0.0.0",
@@ -54,7 +55,7 @@ config_ss() {
     "method": "aes-256-cfb"
 }
 EOF
-    echo -e "${Info} 配置完成，端口：8388，密码：yourpassword，加密方式：aes-256-cfb"
+    echo -e "${Info} 配置完成，端口：8388，密码：yourpassword，加密方式：aes-256-cfb，公网IP：${public_ip}"
 }
 
 # 启动 Shadowsocks
@@ -78,8 +79,9 @@ install_qrencode() {
 # 生成二维码
 generate_qrcode() {
     echo -e "${Info} 生成 Shadowsocks 二维码..."
-    local ss_url="ss://$(echo -n "aes-256-cfb:yourpassword@$(hostname -I | awk '{print $1}'):8388" | base64)"
-    qrencode -o /root/shadowsocks_qr.png ${ss_url}
+    local public_ip=$(curl -s https://api.ipify.org)  # 再次获取公网IP
+    local ss_url="ss://$(echo -n "aes-256-cfb:yourpassword@${public_ip}:8388" | base64 | tr -d '\n')"
+    qrencode -o /root/shadowsocks_qr.png "${ss_url}"
     echo -e "${Info} 二维码已生成，路径：/root/shadowsocks_qr.png"
     echo -e "${Info} 二维码链接：${ss_url}"
 }
