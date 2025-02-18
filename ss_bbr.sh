@@ -1,101 +1,103 @@
-#!/usr/bin/env bash
+#!/bin/bash
 
-# 颜色定义
-Green_font_prefix="\033[32m"
-Red_font_prefix="\033[31m"
-Font_color_suffix="\033[0m"
-Info="${Green_font_prefix}[信息]${Font_color_suffix}"
-Error="${Red_font_prefix}[错误]${Font_color_suffix}"
+RED="\033[31m"      # Error message
+GREEN="\033[32m"    # Success message
+PLAIN='\033[0m'
 
-# 检查是否为 root 用户
-check_root() {
-    if [[ $EUID -ne 0 ]]; then
-        echo -e "${Error} 当前用户不是 root 用户，请切换到 root 用户后重新运行脚本！"
+NAME="shadowsocks-libev"
+CONFIG_FILE="/etc/${NAME}/config.json"
+SERVICE_FILE="/etc/systemd/system/${NAME}.service"
+
+colorEcho() {
+    echo -e "${1}${@:2}${PLAIN}"
+}
+
+checkSystem() {
+    if [[ $(id -u) != 0 ]]; then
+        colorEcho $RED " 请以 root 身份运行此脚本"
+        exit 1
+    fi
+
+    if ! command -v apt &>/dev/null; then
+        colorEcho $RED " 不支持的 Linux 系统。请使用基于 Debian/Ubuntu 的系统。"
         exit 1
     fi
 }
 
-# 检测系统
-check_sys() {
-    if [[ -f /etc/redhat-release ]]; then
-        release="centos"
-    elif grep -q -E -i "debian" /etc/issue; then
-        release="debian"
-    elif grep -q -E -i "ubuntu" /etc/issue; then
-        release="ubuntu"
-    else
-        echo -e "${Error} 当前系统不支持，请使用 CentOS/Debian/Ubuntu 系统！"
-        exit 1
-    fi
+installSS() {
+    colorEcho $GREEN " 安装 Shadowsocks-libev..."
+    apt update
+    apt install -y software-properties-common
+    add-apt-repository -y ppa:max-c-lv/shadowsocks-libev
+    apt update
+    apt install -y shadowsocks-libev
 }
 
-# 安装 Shadowsocks
-install_ss() {
-    echo -e "${Info} 开始安装 Shadowsocks..."
-    if [[ ${release} == "centos" ]]; then
-        yum install -y python-pip
-    else
-        apt-get update
-        apt-get install -y python-pip
-    fi
-    pip install shadowsocks
-    echo -e "${Info} Shadowsocks 安装完成！"
-}
-
-# 配置 Shadowsocks
-config_ss() {
-    echo -e "${Info} 配置 Shadowsocks..."
-    local public_ip=$(curl -s https://api.ipify.org)  # 获取公网IP
-    cat > /etc/shadowsocks.json <<EOF
+configSS() {
+    mkdir -p /etc/shadowsocks-libev
+    cat > $CONFIG_FILE <<EOF
 {
     "server": "0.0.0.0",
-    "server_port": 8388,
-    "password": "yourpassword",
-    "timeout": 900,
-    "method": "aes-256-gcm"
+    "server_port": 1111,
+    "password": "dm66887777",
+    "timeout": 600,
+    "method": "aes-256-gcm",
+    "mode": "tcp_and_udp",
+    "fast_open": true
 }
 EOF
-    echo -e "${Info} 配置完成，端口：8388，密码：yourpassword，加密方式：aes-256-gcm，公网IP：${public_ip}"
 }
 
-# 启动 Shadowsocks
-start_ss() {
-    echo -e "${Info} 启动 Shadowsocks..."
-    nohup ssserver -c /etc/shadowsocks.json > /var/log/shadowsocks.log 2>&1 &
-    echo -e "${Info} Shadowsocks 已启动，日志路径：/var/log/shadowsocks.log"
+createService() {
+    cat > $SERVICE_FILE <<EOF
+[Unit]
+Description=Shadowsocks-libev
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/ss-server -c $CONFIG_FILE
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target
+EOF
+    systemctl daemon-reload
+    systemctl enable --now shadowsocks-libev
 }
 
-# 安装 qrencode
-install_qrencode() {
-    echo -e "${Info} 安装 qrencode..."
-    if [[ ${release} == "centos" ]]; then
-        yum install -y qrencode
-    else
-        apt-get install -y qrencode
-    fi
-    echo -e "${Info} qrencode 安装完成！"
+installBBR() {
+    colorEcho $GREEN " 安装并启用 BBR..."
+    echo "net.core.default_qdisc=fq" >> /etc/sysctl.conf
+    echo "net.ipv4.tcp_congestion_control=bbr" >> /etc/sysctl.conf
+    sysctl -p
+    colorEcho $GREEN " BBR 已启用！"
 }
 
-# 生成二维码
-generate_qrcode() {
-    echo -e "${Info} 生成 Shadowsocks 二维码..."
-    local public_ip=$(curl -s https://api.ipify.org)  # 再次获取公网IP
-    local ss_url="ss://$(echo -n "aes-256-cfb:yourpassword@${public_ip}:8388" | base64 | tr -d '\n')"
-    qrencode -o /root/shadowsocks_qr.png "${ss_url}"
-    echo -e "${Info} 二维码已生成，路径：/root/shadowsocks_qr.png"
-    echo -e "${Info} 二维码链接：${ss_url}"
+showInfo() {
+    IP=$(curl -sL -4 ip.sb)
+    colorEcho $GREEN " Shadowsocks-libev 已安装并启动成功！"
+    echo " 配置信息如下："
+    echo " IP: $IP"
+    echo " 端口: 1111"
+    echo " 密码: dm66887777"
+    echo " 加密方式: aes-256-gcm"
+
+    # Generate QR Code
+    LINK="ss://$(echo -n "aes-256-gcm:dm66887777@${IP}:1111" | base64 -w 0)"
+    QR_FILE="/root/${IP}_ss_protocol.png"
+    qrencode -o "$QR_FILE" "$LINK"
+    echo " 二维码已生成，路径为：$QR_FILE"
+    echo " 二维码链接: $LINK"
 }
 
-# 主菜单
-main_menu() {
-    check_root
-    check_sys
-    install_ss
-    config_ss
-    start_ss
-    install_qrencode
-    generate_qrcode
-    echo -e "${Info} Shadowsocks + 二维码生成完成！"
+main() {
+    checkSystem
+    installSS
+    configSS
+    createService
+    installBBR
+    showInfo
 }
 
-main_menu
+main
