@@ -52,10 +52,10 @@ config_ss() {
     "server_port": 8388,
     "password": "yourpassword",
     "timeout": 900,
-    "method": "aes-256-cfb"
+    "method": "aes-256-gcm"
 }
 EOF
-    echo -e "${Info} 配置完成，端口：8388，密码：yourpassword，加密方式：aes-256-cfb，公网IP：${public_ip}"
+    echo -e "${Info} 配置完成，端口：8388，密码：yourpassword，加密方式：aes-256-gcm，公网IP：${public_ip}"
 }
 
 # 启动 Shadowsocks
