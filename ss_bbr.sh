@@ -51,7 +51,7 @@ config_ss() {
     "server": "0.0.0.0",
     "server_port": 8388,
     "password": "yourpassword",
-    "timeout": 300,
+    "timeout": 900,
     "method": "aes-256-cfb"
 }
 EOF
