@@ -26,7 +26,7 @@ create_config_file() {
     "server": "0.0.0.0",
     "server_port": $port,
     "password": "$password",
-    "timeout": 300,
+    "timeout": 600,
     "method": "$method",
     "fast_open": false,
     "workers": 1
@@ -57,9 +57,9 @@ main() {
     read -p "请输入端口号（默认1111）: " port
     port=${port:-1111}
     read -p "请输入密码（默认Aa778409）: " password
-    password=${password:-Aachen778409}
-    read -p "请输入加密方法（默认aes-256-cfb）: " method
-    method=${method:-aes-256-cfb}
+    password=${password:-Aa778409}
+    read -p "请输入加密方法（默认aes-256-gcm）: " method
+    method=${method:-aes-256-gcm}
 
     install_shadowsocks
     create_config_file $port "$password" "$method"
