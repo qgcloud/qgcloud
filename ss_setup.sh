@@ -90,8 +90,8 @@ main() {
     port=${port:-1111}
     read -p "请输入密码（默认Aa778409）: " password
     password=${password:-Aa778409}
-    read -p "请输入加密方法（默认aes-256-cfb）: " method
-    method=${method:-aes-256-cfb}
+    read -p "请输入加密方法（默认aes-256-gcm）: " method
+    method=${method:-aes-256-gcm}
 
     install_bbr
     install_shadowsocks
