@@ -1,5 +1,19 @@
 #!/bin/bash
 
+# 安装BBR加速
+install_bbr() {
+    echo "安装BBR加速..."
+    echo "net.core.default_qdisc=fq" >> /etc/sysctl.conf
+    echo "net.ipv4.tcp_congestion_control=bbr" >> /etc/sysctl.conf
+    sysctl -p
+    if [ $? -eq 0 ]; then
+        echo "BBR加速已启用。"
+    else
+        echo "BBR加速启用失败。"
+        exit 1
+    fi
+}
+
 # 安装Shadowsocks
 install_shadowsocks() {
     echo "安装Shadowsocks..."
@@ -28,7 +42,7 @@ create_config_file() {
     "password": "$password",
     "timeout": 300,
     "method": "$method",
-    "fast_open": false,
+    "fast_open": true,
     "workers": 1
 }
 EOF
@@ -52,18 +66,38 @@ start_shadowsocks() {
     fi
 }
 
+# 生成二维码
+generate_qr_code() {
+    local port=$1
+    local password=$2
+    local method=$3
+    local server_ip=$(curl -s https://api.ipify.org)
+
+    echo "生成二维码..."
+    pip3 install qrcode[pil]
+    qrcode -t UTF8 "ss://${method}:${password}@${server_ip}:${port}" -o /root/ss_qr.png
+    if [ $? -eq 0 ]; then
+        echo "二维码已生成并保存到 /root/ss_qr.png"
+    else
+        echo "二维码生成失败。"
+        exit 1
+    fi
+}
+
 # 主函数
 main() {
     read -p "请输入端口号（默认1111）: " port
     port=${port:-1111}
     read -p "请输入密码（默认Aa778409）: " password
-    password=${password:-Aachen778409}
+    password=${password:-Aa778409}
     read -p "请输入加密方法（默认aes-256-cfb）: " method
     method=${method:-aes-256-cfb}
 
+    install_bbr
     install_shadowsocks
     create_config_file $port "$password" "$method"
     start_shadowsocks
+    generate_qr_code $port "$password" "$method"
 }
 
 # 执行主函数
