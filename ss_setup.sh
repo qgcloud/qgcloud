@@ -14,12 +14,25 @@ install_bbr() {
     fi
 }
 
-# 安装Shadowsocks
-install_shadowsocks() {
-    echo "安装Shadowsocks..."
+# 安装依赖
+install_dependencies() {
+    echo "安装必要的依赖..."
     apt-get update
-    apt-get install -y python3 python3-pip
-    pip3 install shadowsocks
+    apt-get install -y python3 python3-pip python3-venv curl qrencode
+    if [ $? -eq 0 ]; then
+        echo "依赖安装成功。"
+    else
+        echo "依赖安装失败。"
+        exit 1
+    fi
+}
+
+# 安装Shadowsocks到虚拟环境
+install_shadowsocks() {
+    echo "安装Shadowsocks到虚拟环境..."
+    python3 -m venv /opt/shadowsocks-env
+    source /opt/shadowsocks-env/bin/activate
+    pip install shadowsocks
     if [ $? -eq 0 ]; then
         echo "Shadowsocks安装成功。"
     else
@@ -57,6 +70,7 @@ EOF
 # 启动Shadowsocks服务
 start_shadowsocks() {
     echo "启动Shadowsocks服务..."
+    source /opt/shadowsocks-env/bin/activate
     ssserver -c /etc/shadowsocks.json -d start
     if [ $? -eq 0 ]; then
         echo "Shadowsocks服务已启动。"
@@ -71,11 +85,11 @@ generate_qr_code() {
     local port=$1
     local password=$2
     local method=$3
-    local server_ip=$(curl -s https://api.ipify.org)
+    local server_ip=$(curl -s https://api.ipify.org )
 
     echo "生成二维码..."
-    pip3 install qrcode[pil]
-    qrcode -t UTF8 "ss://${method}:${password}@${server_ip}:${port}" -o /root/ss_qr.png
+    local ss_link="ss://${method}:${password}@${server_ip}:${port}"
+    echo $ss_link | qrencode -o /root/ss_qr.png
     if [ $? -eq 0 ]; then
         echo "二维码已生成并保存到 /root/ss_qr.png"
     else
@@ -94,6 +108,7 @@ main() {
     method=${method:-aes-256-gcm}
 
     install_bbr
+    install_dependencies
     install_shadowsocks
     create_config_file $port "$password" "$method"
     start_shadowsocks
