@@ -18,8 +18,10 @@ install_bbr() {
 install_shadowsocks() {
     echo "安装Shadowsocks..."
     apt-get update
-    apt-get install -y python3 python3-pip
-    pip3 install shadowsocks
+    apt-get install -y python3 python3-pip python3-venv
+    python3 -m venv /opt/shadowsocks-env
+    source /opt/shadowsocks-env/bin/activate
+    pip install shadowsocks
     if [ $? -eq 0 ]; then
         echo "Shadowsocks安装成功。"
     else
@@ -57,6 +59,7 @@ EOF
 # 启动Shadowsocks服务
 start_shadowsocks() {
     echo "启动Shadowsocks服务..."
+    source /opt/shadowsocks-env/bin/activate
     ssserver -c /etc/shadowsocks.json -d start
     if [ $? -eq 0 ]; then
         echo "Shadowsocks服务已启动。"
@@ -74,7 +77,7 @@ generate_qr_code() {
     local server_ip=$(curl -s https://api.ipify.org)
 
     echo "生成二维码..."
-    pip3 install qrcode[pil]
+    pip install qrcode[pil]
     qrcode -t UTF8 "ss://${method}:${password}@${server_ip}:${port}" -o /root/ss_qr.png
     if [ $? -eq 0 ]; then
         echo "二维码已生成并保存到 /root/ss_qr.png"
