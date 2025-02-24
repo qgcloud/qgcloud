@@ -36,12 +36,12 @@ create_config_file() {
     echo "创建配置文件..."
     cat > /etc/shadowsocks.json <<EOF
 {
-    "server": "8.8.8.8",
+    "server": "0.0.0.0",
     "server_port": $port,
     "password": "$password",
     "timeout": 300,
     "method": "$method",
-    "fast_open": true,
+    "fast_open": false,
     "workers": 1
 }
 EOF
