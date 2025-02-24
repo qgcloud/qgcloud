@@ -61,6 +61,12 @@ start_shadowsocks() {
     local method=$3
     local server_ip=$(curl -s https://api.ipify.org)
 
+    # 检查并删除已存在的同名容器
+    if docker ps -a --format '{{.Names}}' | grep -q "^shadowsocks$"; then
+        echo "检测到已存在的同名容器，正在删除..."
+        docker rm -f shadowsocks
+    fi
+
     # 创建 Docker 容器
     docker run -d --name shadowsocks \
         -p $port:$port \
