@@ -67,6 +67,12 @@ start_shadowsocks() {
         docker rm -f shadowsocks
     fi
 
+    # 检查并释放占用的端口
+    if pid=$(lsof -t -i :$port); then
+        echo "端口 $port 已被占用，正在释放..."
+        sudo kill -9 $pid
+    fi
+
     # 创建 Docker 容器
     docker run -d --name shadowsocks \
         -p $port:$port \
