@@ -29,9 +29,13 @@ install_dependencies() {
 
 # 安装Shadowsocks到虚拟环境
 install_shadowsocks() {
-    echo "安装Shadowsocks到虚拟环境..."
+    echo "安装 Shadowsocks 到虚拟环境..."
     python3 -m venv /opt/shadowsocks-env
     source /opt/shadowsocks-env/bin/activate
+
+    # 安装兼容性库
+    pip install backports.collections-abc
+    # 安装 Shadowsocks
     pip install shadowsocks
     if [ $? -eq 0 ]; then
         echo "Shadowsocks安装成功。"
