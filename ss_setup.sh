@@ -65,13 +65,33 @@ start_shadowsocks() {
     if docker ps -a --format '{{.Names}}' | grep -q "^shadowsocks$"; then
         echo "检测到已存在的同名容器，正在删除..."
         docker rm -f shadowsocks
+        if [ $? -ne 0 ]; then
+            echo "删除容器失败，请手动删除容器后重试。"
+            exit 1
+        fi
     fi
 
-    # 检查并释放占用的端口
-    if pid=$(lsof -t -i :$port); then
-        echo "端口 $port 已被占用，正在释放..."
-        sudo kill -9 $pid
+    # 确保端口已释放
+    echo "检查端口 $port 是否已被释放..."
+    if ! timeout 1 bash -c "nc -zv 0.0.0.0 $port" &> /dev/null; then
+        echo "端口 $port 已释放，可以继续。"
+    else
+        echo "端口 $port 仍然被占用，正在尝试释放..."
+        if pid=$(lsof -t -i :$port); then
+            echo "端口 $port 被 PID $pid 占用，正在杀死进程..."
+            sudo kill -9 $pid
+            if [ $? -eq 0 ]; then
+                echo "已杀死占用端口 $port 的进程。"
+            else
+                echo "无法杀死占用端口 $port 的进程，请手动释放端口。"
+                exit 1
+            fi
+        else
+            echo "无法确定占用端口 $port 的进程，请手动检查端口占用情况。"
+            exit 1
+        fi
     fi
+
 
     # 创建 Docker 容器
     docker run -d --name shadowsocks \
