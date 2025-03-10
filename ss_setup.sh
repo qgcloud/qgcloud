@@ -39,7 +39,7 @@ create_config_file() {
     "server": "0.0.0.0",
     "server_port": $port,
     "password": "$password",
-    "timeout": 300,
+    "timeout": 600,
     "method": "$method",
     "fast_open": false,
     "workers": 1
