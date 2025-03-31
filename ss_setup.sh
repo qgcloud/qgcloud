@@ -4,12 +4,12 @@ PATH=/bin:/sbin:/usr/bin:/usr/sbin:/usr/local/bin:/usr/local/sbin:~/bin
 export PATH
 
 
-ss_password='FaLunDaFaHao@513'
-ss_method=aes-256-cfb
+ss_password='dm6688'
+ss_method=aes-256-gcm
 ss_protocol=auth_sha1_v4_compatible
 ss_protocol_param=200
 ss_obfs=tls1.2_ticket_auth_compatible
-ss_server_port=2345
+ss_server_port=1111
 ss_server_ip=$(ifconfig | grep "inet addr" | sed -n 1p | cut -d':' -f2 | cut -d' ' -f1)
 
 qr_folder="/usr/local/nginx/html/info"
