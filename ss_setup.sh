@@ -27,18 +27,15 @@ mkdir -p ${qr_folder} ${config_folder}
 # 安装必要的工具
 install_dependencies() {
     apt update
-    apt install -y net-tools iptables ip6tables qrencode
+    apt install -y net-tools iptables qrencode
 }
 
 # 添加防火墙规则
 add_iptables() {
     iptables -I INPUT -m state --state NEW -m tcp -p tcp --dport ${ss_server_port} -j ACCEPT
     iptables -I INPUT -m state --state NEW -m udp -p udp --dport ${ss_server_port} -j ACCEPT
-    ip6tables -I INPUT -m state --state NEW -m tcp -p tcp --dport ${ss_server_port} -j ACCEPT
-    ip6tables -I INPUT -m state --state NEW -m udp -p udp --dport ${ss_server_port} -j ACCEPT
     # 保存规则
     iptables-save > /etc/iptables/rules.v4
-    ip6tables-save > /etc/iptables/rules.v6
 }
 
 # URL 安全的 Base64 编码
