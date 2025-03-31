@@ -27,7 +27,17 @@ mkdir -p ${qr_folder} ${config_folder}
 # 安装必要的工具
 install_dependencies() {
     apt update
-    apt install -y net-tools iptables qrencode
+    apt install -y net-tools iptables qrencode build-essential libevent-dev libssl-dev libsodium-dev git
+}
+
+# 从 GitHub 下载并安装 Shadowsocks-libev
+install_shadowsocks_libev() {
+    git clone https://github.com/shadowsocks/shadowsocks-libev.git
+    cd shadowsocks-libev
+    ./autogen.sh
+    ./configure --prefix=/usr/local/shadowsocks-libev --with-libevent --with-openssl --with-libsodium
+    make && make install
+    cd ..
 }
 
 # 添加防火墙规则
@@ -35,6 +45,7 @@ add_iptables() {
     iptables -I INPUT -m state --state NEW -m tcp -p tcp --dport ${ss_server_port} -j ACCEPT
     iptables -I INPUT -m state --state NEW -m udp -p udp --dport ${ss_server_port} -j ACCEPT
     # 保存规则
+    apt install -y iptables-persistent
     iptables-save > /etc/iptables/rules.v4
 }
 
@@ -100,6 +111,7 @@ EOF
 # 主函数
 main() {
     install_dependencies
+    install_shadowsocks_libev
     write_configuration
     add_iptables
     ss_link_qr
