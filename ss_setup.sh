@@ -10,7 +10,7 @@ ss_protocol=auth_sha1_v4_compatible
 ss_protocol_param=200
 ss_obfs=tls1.2_ticket_auth_compatible
 ss_server_port=1111
-ss_server_ip=$(ifconfig | grep "inet addr" | sed -n 1p | cut -d':' -f2 | cut -d' ' -f1)
+ss_server_ip=$(ip -4 addr show scope global | grep -oP '(?<=inet\s)\d+(\.\d+){3}' | head -1)
 
 # 目录路径
 qr_folder="/usr/local/nginx/html/info"
@@ -36,8 +36,9 @@ add_iptables() {
     iptables -I INPUT -m state --state NEW -m udp -p udp --dport ${ss_server_port} -j ACCEPT
     ip6tables -I INPUT -m state --state NEW -m tcp -p tcp --dport ${ss_server_port} -j ACCEPT
     ip6tables -I INPUT -m state --state NEW -m udp -p udp --dport ${ss_server_port} -j ACCEPT
-    service iptables save
-    service ip6tables save
+    # 保存规则
+    iptables-save > /etc/iptables/rules.v4
+    ip6tables-save > /etc/iptables/rules.v6
 }
 
 # URL 安全的 Base64 编码
