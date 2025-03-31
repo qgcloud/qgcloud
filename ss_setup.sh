@@ -3,7 +3,7 @@
 PATH=/bin:/sbin:/usr/bin:/usr/sbin:/usr/local/bin:/usr/local/sbin:~/bin
 export PATH
 
-
+# 配置参数
 ss_password='dm6688'
 ss_method=aes-256-gcm
 ss_protocol=auth_sha1_v4_compatible
@@ -12,8 +12,8 @@ ss_obfs=tls1.2_ticket_auth_compatible
 ss_server_port=1111
 ss_server_ip=$(ifconfig | grep "inet addr" | sed -n 1p | cut -d':' -f2 | cut -d' ' -f1)
 
+# 目录路径
 qr_folder="/usr/local/nginx/html/info"
-
 ssr_folder="/usr/local/shadowsocksr"
 ssr_ss_file="${ssr_folder}/shadowsocks"
 config_file="${ssr_folder}/config.json"
@@ -21,44 +21,53 @@ config_folder="/etc/shadowsocksr"
 config_user_file="${config_folder}/user-config.json"
 ssr_log_file="${ssr_ss_file}/ssserver.log"
 
+# 确保所需目录存在
+mkdir -p ${qr_folder} ${config_folder}
 
-add_iptables(){
-	iptables -I INPUT -m state --state NEW -m tcp -p tcp --dport ${ss_server_port} -j ACCEPT
-	iptables -I INPUT -m state --state NEW -m udp -p udp --dport ${ss_server_port} -j ACCEPT
-	ip6tables -I INPUT -m state --state NEW -m tcp -p tcp --dport ${ss_server_port} -j ACCEPT
-	ip6tables -I INPUT -m state --state NEW -m udp -p udp --dport ${ss_server_port} -j ACCEPT
-	service iptables save
-	service ip6tables save
+# 安装必要的工具
+install_dependencies() {
+    apt update
+    apt install -y net-tools iptables ip6tables qrencode
 }
 
-urlsafe_base64(){
-	date=$(echo -n "$1"|base64|sed ':a;N;s/\n/ /g;ta'|sed 's/ //g;s/=//g;s/+/-/g;s/\//_/g')
-	echo -e "${date}"
+# 添加防火墙规则
+add_iptables() {
+    iptables -I INPUT -m state --state NEW -m tcp -p tcp --dport ${ss_server_port} -j ACCEPT
+    iptables -I INPUT -m state --state NEW -m udp -p udp --dport ${ss_server_port} -j ACCEPT
+    ip6tables -I INPUT -m state --state NEW -m tcp -p tcp --dport ${ss_server_port} -j ACCEPT
+    ip6tables -I INPUT -m state --state NEW -m udp -p udp --dport ${ss_server_port} -j ACCEPT
+    service iptables save
+    service ip6tables save
 }
 
-ss_link_qr(){
-	SSbase64=$(urlsafe_base64 "${ss_method}:${ss_password}@${ss_server_ip}:${ss_server_port}")
-	SSurl="ss://${SSbase64}"
-	qrencode -o $qr_folder/ss.png -s 8 "${SSurl}"
-	echo "${SSurl}" >> url.txt
+# URL 安全的 Base64 编码
+urlsafe_base64() {
+    echo -n "$1" | base64 | tr '+/' '-_' | tr -d '='
 }
 
-ssr_link_qr(){
-	SSRprotocol=$(echo ${ss_protocol} | sed 's/_compatible//g')
-	SSRobfs=$(echo ${ss_obfs} | sed 's/_compatible//g')
-	SSRPWDbase64=$(urlsafe_base64 "${ss_password}")
-	#remarkBase64=$(urlsafe_base64 "gfw-breaker [${ss_server_ip}]")
-	remarkBase64=$(urlsafe_base64 "http://truth.atspace.eu/legend/")
-	SSRbase64=$(urlsafe_base64 "${ss_server_ip}:${ss_server_port}:${SSRprotocol}:${ss_method}:${SSRobfs}:${SSRPWDbase64}/?remarks=${remarkBase64}")
-	SSRurl="ssr://${SSRbase64}"
-	qrencode -o $qr_folder/ssr.png -s 8 "${SSRurl}"
-	echo "${SSRurl}" >> url.txt
+# 生成 SS 链接和二维码
+ss_link_qr() {
+    SSbase64=$(urlsafe_base64 "${ss_method}:${ss_password}@${ss_server_ip}:${ss_server_port}")
+    SSurl="ss://${SSbase64}"
+    qrencode -o ${qr_folder}/ss.png -s 8 "${SSurl}"
+    echo "${SSurl}" >> url.txt
 }
 
+# 生成 SSR 链接和二维码
+ssr_link_qr() {
+    SSRprotocol=$(echo ${ss_protocol} | sed 's/_compatible//g')
+    SSRobfs=$(echo ${ss_obfs} | sed 's/_compatible//g')
+    SSRPWDbase64=$(urlsafe_base64 "${ss_password}")
+    remarkBase64=$(urlsafe_base64 "gfw-breaker [${ss_server_ip}]")
+    SSRbase64=$(urlsafe_base64 "${ss_server_ip}:${ss_server_port}:${SSRprotocol}:${ss_method}:${SSRobfs}:${SSRPWDbase64}/?remarks=${remarkBase64}")
+    SSRurl="ssr://${SSRbase64}"
+    qrencode -o ${qr_folder}/ssr.png -s 8 "${SSRurl}"
+    echo "${SSRurl}" >> url.txt
+}
 
-write_configuration(){
-	mkdir -p ${config_folder}
-	cat > ${config_user_file}<<-EOF
+# 写入配置文件
+write_configuration() {
+    cat > ${config_user_file} <<-EOF
 {
     "server": "${ss_server_ip}",
     "server_ipv6": "::",
@@ -86,8 +95,14 @@ write_configuration(){
 EOF
 }
 
+# 主函数
+main() {
+    install_dependencies
+    write_configuration
+    add_iptables
+    ss_link_qr
+    ssr_link_qr
+}
 
-write_configuration
-add_iptables
-ss_link_qr
-ssr_link_qr
+# 执行主函数
+main
