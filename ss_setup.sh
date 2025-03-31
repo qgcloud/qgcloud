@@ -1,146 +1,93 @@
 #!/bin/bash
 
-# 安装BBR加速
-install_bbr() {
-    echo "安装BBR加速..."
-    echo "net.core.default_qdisc=fq" >> /etc/sysctl.conf
-    echo "net.ipv4.tcp_congestion_control=bbr" >> /etc/sysctl.conf
-    sysctl -p
-    if [ $? -eq 0 ]; then
-        echo "BBR加速已启用。"
-    else
-        echo "BBR加速启用失败。"
-        exit 1
-    fi
+PATH=/bin:/sbin:/usr/bin:/usr/sbin:/usr/local/bin:/usr/local/sbin:~/bin
+export PATH
+
+
+ss_password='FaLunDaFaHao@513'
+ss_method=aes-256-cfb
+ss_protocol=auth_sha1_v4_compatible
+ss_protocol_param=200
+ss_obfs=tls1.2_ticket_auth_compatible
+ss_server_port=2345
+ss_server_ip=$(ifconfig | grep "inet addr" | sed -n 1p | cut -d':' -f2 | cut -d' ' -f1)
+
+qr_folder="/usr/local/nginx/html/info"
+
+ssr_folder="/usr/local/shadowsocksr"
+ssr_ss_file="${ssr_folder}/shadowsocks"
+config_file="${ssr_folder}/config.json"
+config_folder="/etc/shadowsocksr"
+config_user_file="${config_folder}/user-config.json"
+ssr_log_file="${ssr_ss_file}/ssserver.log"
+
+
+add_iptables(){
+	iptables -I INPUT -m state --state NEW -m tcp -p tcp --dport ${ss_server_port} -j ACCEPT
+	iptables -I INPUT -m state --state NEW -m udp -p udp --dport ${ss_server_port} -j ACCEPT
+	ip6tables -I INPUT -m state --state NEW -m tcp -p tcp --dport ${ss_server_port} -j ACCEPT
+	ip6tables -I INPUT -m state --state NEW -m udp -p udp --dport ${ss_server_port} -j ACCEPT
+	service iptables save
+	service ip6tables save
 }
 
-# 安装依赖
-install_dependencies() {
-    echo "安装必要的依赖..."
-    apt-get update
-    apt-get install -y curl qrencode docker.io
-    if [ $? -eq 0 ]; then
-        echo "依赖安装成功。"
-    else
-        echo "依赖安装失败。"
-        exit 1
-    fi
+urlsafe_base64(){
+	date=$(echo -n "$1"|base64|sed ':a;N;s/\n/ /g;ta'|sed 's/ //g;s/=//g;s/+/-/g;s/\//_/g')
+	echo -e "${date}"
 }
 
-# 创建配置文件
-create_config_file() {
-    local port=$1
-    local password=$2
-    local method=$3
+ss_link_qr(){
+	SSbase64=$(urlsafe_base64 "${ss_method}:${ss_password}@${ss_server_ip}:${ss_server_port}")
+	SSurl="ss://${SSbase64}"
+	qrencode -o $qr_folder/ss.png -s 8 "${SSurl}"
+	echo "${SSurl}" >> url.txt
+}
 
-    echo "创建配置文件..."
-    cat > /etc/shadowsocks.json <<EOF
+ssr_link_qr(){
+	SSRprotocol=$(echo ${ss_protocol} | sed 's/_compatible//g')
+	SSRobfs=$(echo ${ss_obfs} | sed 's/_compatible//g')
+	SSRPWDbase64=$(urlsafe_base64 "${ss_password}")
+	#remarkBase64=$(urlsafe_base64 "gfw-breaker [${ss_server_ip}]")
+	remarkBase64=$(urlsafe_base64 "http://truth.atspace.eu/legend/")
+	SSRbase64=$(urlsafe_base64 "${ss_server_ip}:${ss_server_port}:${SSRprotocol}:${ss_method}:${SSRobfs}:${SSRPWDbase64}/?remarks=${remarkBase64}")
+	SSRurl="ssr://${SSRbase64}"
+	qrencode -o $qr_folder/ssr.png -s 8 "${SSRurl}"
+	echo "${SSRurl}" >> url.txt
+}
+
+
+write_configuration(){
+	mkdir -p ${config_folder}
+	cat > ${config_user_file}<<-EOF
 {
-    "server": "0.0.0.0",
-    "server_port": $port,
-    "password": "$password",
-    "timeout": 300,
-    "method": "$method",
-    "fast_open": false,
-    "workers": 1
+    "server": "${ss_server_ip}",
+    "server_ipv6": "::",
+    "server_port": ${ss_server_port},
+    "local_address": "127.0.0.1",
+    "local_port": 1080,
+
+    "password": "${ss_password}",
+    "method": "${ss_method}",
+    "protocol": "${ss_protocol}",
+    "protocol_param": "${ss_protocol_param}",
+    "obfs": "${ss_obfs}",
+    "obfs_param": "",
+    "speed_limit_per_con": 0,
+    "speed_limit_per_user": 0,
+
+    "additional_ports" : {},
+    "timeout": 120,
+    "udp_timeout": 60,
+    "dns_ipv6": false,
+    "connect_verbose_info": 0,
+    "redirect": "",
+    "fast_open": false
 }
 EOF
-    if [ $? -eq 0 ]; then
-        echo "配置文件创建成功。"
-    else
-        echo "配置文件创建失败。"
-        exit 1
-    fi
 }
 
-# 启动Shadowsocks服务
-start_shadowsocks() {
-    echo "启动Shadowsocks服务..."
-    local port=$1
-    local password=$2
-    local method=$3
-    local server_ip=$(curl -s https://api.ipify.org)
 
-    # 检查并删除已存在的同名容器
-    if docker ps -a --format '{{.Names}}' | grep -q "^shadowsocks$"; then
-        echo "检测到已存在的同名容器，正在删除..."
-        docker rm -f shadowsocks
-        if [ $? -ne 0 ]; then
-            echo "删除容器失败，请手动删除容器后重试。"
-            exit 1
-        fi
-    fi
-
-    # 确保端口已释放
-    echo "检查端口 $port 是否已被释放..."
-    if ! timeout 1 bash -c "nc -zv 0.0.0.0 $port" &> /dev/null; then
-        echo "端口 $port 已释放，可以继续。"
-    else
-        echo "端口 $port 仍然被占用，正在尝试释放..."
-        if pid=$(lsof -t -i :$port); then
-            echo "端口 $port 被 PID $pid 占用，正在杀死进程..."
-            sudo kill -9 $pid
-            if [ $? -eq 0 ]; then
-                echo "已杀死占用端口 $port 的进程。"
-            else
-                echo "无法杀死占用端口 $port 的进程，请手动释放端口。"
-                exit 1
-            fi
-        else
-            echo "无法确定占用端口 $port 的进程，请手动检查端口占用情况。"
-            exit 1
-        fi
-    fi
-
-
-    # 创建 Docker 容器
-    docker run -d --name shadowsocks \
-        -p $port:$port \
-        -v /etc/shadowsocks.json:/etc/shadowsocks.json \
-        --restart unless-stopped \
-        mritd/shadowsocks -c /etc/shadowsocks.json -d start
-
-    if [ $? -eq 0 ]; then
-        echo "Shadowsocks服务已启动。"
-    else
-        echo "Shadowsocks服务启动失败。"
-        exit 1
-    fi
-}
-
-# 生成二维码
-generate_qr_code() {
-    local port=$1
-    local password=$2
-    local method=$3
-    local server_ip=$(curl -s https://api.ipify.org)
-
-    echo "生成二维码..."
-    local ss_link="ss://${method}:${password}@${server_ip}:${port}"
-    echo $ss_link | qrencode -o /root/ss_qr.png
-    if [ $? -eq 0 ]; then
-        echo "二维码已生成并保存到 /root/ss_qr.png"
-    else
-        echo "二维码生成失败。"
-        exit 1
-    fi
-}
-
-# 主函数
-main() {
-    read -p "请输入端口号（默认1111）: " port
-    port=${port:-1111}
-    read -p "请输入密码（默认Aa778409）: " password
-    password=${password:-Aa778409}
-    read -p "请输入加密方法（默认aes-256-gcm）: " method
-    method=${method:-aes-256-gcm}
-
-    install_bbr
-    install_dependencies
-    create_config_file $port "$password" "$method"
-    start_shadowsocks $port "$password" "$method"
-    generate_qr_code $port "$password" "$method"
-}
-
-# 执行主函数
-main
+write_configuration
+add_iptables
+ss_link_qr
+ssr_link_qr
