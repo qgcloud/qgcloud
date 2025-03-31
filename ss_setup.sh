@@ -49,6 +49,8 @@ ss_link_qr() {
     SSurl="ss://${SSbase64}"
     qrencode -o ${qr_folder}/ss.png -s 8 "${SSurl}"
     echo "${SSurl}" >> url.txt
+    echo "SS 链接已生成：${SSurl}"
+    echo "SS 二维码已生成，路径为：${qr_folder}/ss.png"
 }
 
 # 生成 SSR 链接和二维码
@@ -61,6 +63,8 @@ ssr_link_qr() {
     SSRurl="ssr://${SSRbase64}"
     qrencode -o ${qr_folder}/ssr.png -s 8 "${SSRurl}"
     echo "${SSRurl}" >> url.txt
+    echo "SSR 链接已生成：${SSRurl}"
+    echo "SSR 二维码已生成，路径为：${qr_folder}/ssr.png"
 }
 
 # 写入配置文件
