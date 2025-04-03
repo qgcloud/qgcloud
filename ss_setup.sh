@@ -43,10 +43,10 @@ After=network.target
 
 [Service]
 ExecStart=/usr/local/bin/gost \
--L \"http://$SOCKS5_USER:$SOCKS5_PASSWORD@:2080?limiter.in=5MB&limiter.out=5MB&climiter=111\" \
--L \"socks5://$SOCKS5_USER:$SOCKS5_PASSWORD@:$SOCKS5_PORT?udp=true&limiter.in=5MB&limiter.out=5MB&climiter=111\" \
--L \"ss://aes-128-gcm:pass@:8338?limiter.in=5MB&limiter.out=5MB&climiter=111\" \
--L \"ssu+udp://aes-128-gcm:pass@:8338?limiter.in=5MB&limiter.out=5MB&climiter=111\"
+-L \"http://$SOCKS5_USER:$SOCKS5_PASSWORD@:2080?limiter.in=20MB&limiter.out=20MB&climiter=11\" \
+-L \"socks5://$SOCKS5_USER:$SOCKS5_PASSWORD@:$SOCKS5_PORT?udp=true&limiter.in=20MB&limiter.out=20MB&climiter=11\" \
+-L \"ss://aes-128-gcm:pass@:8338?limiter.in=20MB&limiter.out=20MB&climiter=11\" \
+-L \"ssu+udp://aes-128-gcm:pass@:8338?limiter.in=20MB&limiter.out=20MB&climiter=11\"
 Restart=always
 
 [Install]
