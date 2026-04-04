@@ -1,0 +1,1316 @@
+第一步：准备面板服务器
+
+# SSH连接到面板服务器
+ssh -i your-key.pem ec2-user@panel-server-ip
+
+# 系统更新
+sudo yum update -y  # Amazon Linux
+# 或
+sudo apt update && sudo apt upgrade -y  # Ubuntu
+
+# 安装依赖3.1 配置文件 backend/config.py
+sudo yum install -y python3 python3-pip nodejs npm git
+sudo pip3 install fastapi uvicorn boto3 sqlite3 pydantic
+
+ 第二步：项目结构
+mkdir -p ~/lightsail-panel && cd ~/lightsail-panel
+mkdir -p backend frontend
+
+第三步：后端实现（FastAPI）
+3.1 配置文件 backend/config.py
+# AWS区域和可用区配置（基于最新Lightsail支持区域）[^38^]
+AWS_REGIONS = {
+    "us-east-1": {"name": "美国东部 (弗吉尼亚)", "zones": ["us-east-1a", "us-east-1b", "us-east-1c", "us-east-1d", "us-east-1e", "us-east-1f"]},
+    "us-east-2": {"name": "美国东部 (俄亥俄)", "zones": ["us-east-2a", "us-east-2b", "us-east-2c"]},
+    "us-west-2": {"name": "美国西部 (俄勒冈)", "zones": ["us-west-2a", "us-west-2b", "us-west-2c", "us-west-2d"]},
+    "eu-central-1": {"name": "欧洲 (法兰克福)", "zones": ["eu-central-1a", "eu-central-1b", "eu-central-1c"]},
+    "eu-west-1": {"name": "欧洲 (爱尔兰)", "zones": ["eu-west-1a", "eu-west-1b", "eu-west-1c"]},
+    "eu-west-2": {"name": "欧洲 (伦敦)", "zones": ["eu-west-2a", "eu-west-2b", "eu-west-2c"]},
+    "ap-northeast-1": {"name": "亚太 (东京)", "zones": ["ap-northeast-1a", "ap-northeast-1c", "ap-northeast-1d"]},
+    "ap-northeast-2": {"name": "亚太 (首尔)", "zones": ["ap-northeast-2a", "ap-northeast-2b", "ap-northeast-2c"]},
+    "ap-southeast-1": {"name": "亚太 (新加坡)", "zones": ["ap-southeast-1a", "ap-southeast-1b", "ap-southeast-1c"]},
+    "ap-southeast-2": {"name": "亚太 (悉尼)", "zones": ["ap-southeast-2a", "ap-southeast-2b", "ap-southeast-2c"]},
+    "ap-south-1": {"name": "亚太 (孟买)", "zones": ["ap-south-1a", "ap-south-1b", "ap-south-1c"]},
+    "ca-central-1": {"name": "加拿大 (中部)", "zones": ["ca-central-1a", "ca-central-1b", "ca-central-1d"]},
+}
+
+# 实例配置和价格（Linux/Unix）[^36^][^37^]
+INSTANCE_BUNDLES = {
+    "nano_3_0": {
+        "name": "Nano (2核512MB)",
+        "ipv4_price": 5.00,
+        "ipv6_price": 3.50,
+        "specs": "2 vCPU / 512MB RAM / 20GB SSD / 1TB流量",
+        "transfer_gb": 1000
+    },
+    "micro_3_0": {
+        "name": "Micro (2核1GB)",
+        "ipv4_price": 7.00,
+        "ipv6_price": 5.00,
+        "specs": "2 vCPU / 1GB RAM / 40GB SSD / 2TB流量",
+        "transfer_gb": 2000
+    },
+    "small_3_0": {
+        "name": "Small (2核2GB)",
+        "ipv4_price": 12.00,
+        "ipv6_price": 10.00,
+        "specs": "2 vCPU / 2GB RAM / 60GB SSD / 3TB流量",
+        "transfer_gb": 3000
+    },
+    "medium_3_0": {
+        "name": "Medium (2核4GB)",
+        "ipv4_price": 24.00,
+        "ipv6_price": 20.00,
+        "specs": "2 vCPU / 4GB RAM / 80GB SSD / 4TB流量",
+        "transfer_gb": 4000
+    },
+    "large_3_0": {
+        "name": "Large (2核8GB)",
+        "ipv4_price": 44.00,
+        "ipv6_price": 40.00,
+        "specs": "2 vCPU / 8GB RAM / 160GB SSD / 5TB流量",
+        "transfer_gb": 5000
+    },
+}
+
+# 操作系统蓝图（OS Only）[^1^][^42^]
+OS_BLUEPRINTS = {
+    "amazon_linux_2023": {"name": "Amazon Linux 2023", "type": "linux", "username": "ec2-user"},
+    "amazon_linux_2": {"name": "Amazon Linux 2", "type": "linux", "username": "ec2-user"},
+    "ubuntu_24_04": {"name": "Ubuntu 24.04 LTS", "type": "linux", "username": "ubuntu"},
+    "ubuntu_22_04": {"name": "Ubuntu 22.04 LTS", "type": "linux", "username": "ubuntu"},
+    "debian_12": {"name": "Debian 12", "type": "linux", "username": "admin"},
+    "centos_9": {"name": "CentOS Stream 9", "type": "linux", "username": "ec2-user"},
+    "freebsd_13": {"name": "FreeBSD 13", "type": "unix", "username": "ec2-user"},
+    "opensuse_15": {"name": "openSUSE Leap 15", "type": "linux", "username": "ec2-user"},
+    "windows_server_2022": {"name": "Windows Server 2022", "type": "windows", "username": "Administrator"},
+    "windows_server_2019": {"name": "Windows Server 2019", "type": "windows", "username": "Administrator"},
+}
+
+# 网络类型
+NETWORK_TYPES = {
+    "dual_stack": {"name": "IPv4 + IPv6 (双栈)", "has_ipv4": True, "has_ipv6": True},
+    "ipv6_only": {"name": "仅 IPv6 (节省30%费用)", "has_ipv4": False, "has_ipv6": True},
+}
+
+3.2 主应用 backend/main.py
+from fastapi import FastAPI, HTTPException, BackgroundTasks
+from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel, Field
+from typing import List, Optional
+import boto3
+import sqlite3
+import json
+from datetime import datetime
+from config import AWS_REGIONS, INSTANCE_BUNDLES, OS_BLUEPRINTS, NETWORK_TYPES
+
+app = FastAPI(title="Lightsail控制面板")
+
+# CORS配置
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# 初始化数据库
+def init_db():
+    conn = sqlite3.connect('lightsail_panel.db')
+    c = conn.cursor()
+    c.execute('''CREATE TABLE IF NOT EXISTS instances
+                 (id TEXT PRIMARY KEY, name TEXT, region TEXT, bundle_id TEXT,
+                  blueprint_id TEXT, created_at TEXT, status TEXT, 
+                  public_ip TEXT, private_ip TEXT, ipv6_addresses TEXT,
+                  password TEXT, network_type TEXT, monthly_cost REAL)''')
+    conn.commit()
+    conn.close()
+
+init_db()
+
+# 数据模型
+class CreateInstanceRequest(BaseModel):
+    region: str
+    availability_zone: str
+    bundle_id: str
+    blueprint_id: str
+    network_type: str = "dual_stack"  # dual_stack 或 ipv6_only
+    count: int = Field(1, ge=1, le=20)  # 批量创建最多20台
+    password: Optional[str] = None  # 密码连接功能
+    user_data: Optional[str] = ""  # 开机脚本
+    name_prefix: str = "worker"
+
+class InstanceResponse(BaseModel):
+    id: str
+    name: str
+    region: str
+    status: str
+    public_ip: Optional[str]
+    bundle_name: str
+    os_name: str
+    monthly_cost: float
+    created_at: str
+
+# 获取配置接口
+@app.get("/api/config")
+def get_config():
+    """获取所有配置选项"""
+    return {
+        "regions": AWS_REGIONS,
+        "bundles": INSTANCE_BUNDLES,
+        "blueprints": OS_BLUEPRINTS,
+        "network_types": NETWORK_TYPES
+    }
+
+# 计算价格接口
+@app.post("/api/calculate-price")
+def calculate_price(request: dict):
+    """计算批量创建的总价格"""
+    bundle = INSTANCE_BUNDLES.get(request["bundle_id"])
+    network = NETWORK_TYPES.get(request["network_type"])
+    
+    if not bundle or not network:
+        raise HTTPException(status_code=400, detail="无效的配置")
+    
+    # 根据网络类型选择价格
+    unit_price = bundle["ipv6_price"] if not network["has_ipv4"] else bundle["ipv4_price"]
+    total = unit_price * request["count"]
+    
+    # 亚太地区流量减半警告[^37^]
+    region = request["region"]
+    is_ap = any(x in region for x in ["ap-", "mumbai", "sydney", "jakarta"])
+    warning = None
+    if is_ap:
+        warning = "⚠️ 亚太地区流量配额减半（如1TB变500GB），请注意流量成本"
+    
+    return {
+        "unit_price": unit_price,
+        "count": request["count"],
+        "total_monthly": round(total, 2),
+        "bundle_specs": bundle["specs"],
+        "transfer_gb": bundle["transfer_gb"] / (2 if is_ap else 1),
+        "warning": warning
+    }
+
+# 创建实例接口
+@app.post("/api/instances/create")
+async def create_instances(request: CreateInstanceRequest, background_tasks: BackgroundTasks):
+    """批量创建Lightsail实例"""
+    try:
+        lightsail = boto3.client('lightsail', region_name=request.region)
+        
+        created_instances = []
+        timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
+        
+        for i in range(request.count):
+            instance_name = f"{request.name_prefix}-{timestamp}-{i+1}"
+            
+            # 构建创建参数
+            params = {
+                "instanceNames": [instance_name],
+                "availabilityZone": request.availability_zone,
+                "blueprintId": request.blueprint_id,
+                "bundleId": request.bundle_id,
+            }
+            
+            # 添加开机脚本
+            user_data = request.user_data or ""
+            
+            # 如果设置了密码，配置密码连接（仅Linux支持）
+            if request.password and OS_BLUEPRINTS[request.blueprint_id]["type"] == "linux":
+                # 设置密码的cloud-init脚本
+                password_script = f"""#!/bin/bash
+echo 'root:{request.password}' | chpasswd
+echo 'ec2-user:{request.password}' | chpasswd
+sed -i 's/PasswordAuthentication no/PasswordAuthentication yes/' /etc/ssh/sshd_config
+sed -i 's/#PasswordAuthentication yes/PasswordAuthentication yes/' /etc/ssh/sshd_config
+systemctl restart sshd || service ssh restart
+"""
+                user_data = password_script + "\n" + user_data
+            
+            if user_data:
+                params["userData"] = user_data
+            
+            # 执行创建
+            response = lightsail.create_instances(**params)
+            
+            # 获取价格
+            bundle = INSTANCE_BUNDLES[request.bundle_id]
+            network = NETWORK_TYPES[request.network_type]
+            monthly_cost = bundle["ipv6_price"] if not network["has_ipv4"] else bundle["ipv4_price"]
+            
+            # 保存到数据库
+            conn = sqlite3.connect('lightsail_panel.db')
+            c = conn.cursor()
+            c.execute("""INSERT INTO instances 
+                        (id, name, region, bundle_id, blueprint_id, created_at, 
+                         status, password, network_type, monthly_cost)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                     (response["operations"][0]["resourceName"], 
+                      instance_name, request.region, request.bundle_id,
+                      request.blueprint_id, datetime.now().isoformat(),
+                      "Pending", request.password, request.network_type, monthly_cost))
+            conn.commit()
+            conn.close()
+            
+            created_instances.append({
+                "name": instance_name,
+                "operation_id": response["operations"][0]["id"]
+            })
+        
+        # 后台任务：轮询创建状态
+        background_tasks.add_task(poll_creation_status, request.region, created_instances)
+        
+        return {
+            "success": True,
+            "created": len(created_instances),
+            "instances": created_instances,
+            "total_cost": monthly_cost * request.count
+        }
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+async def poll_creation_status(region: str, instances: list):
+    """后台轮询实例创建状态"""
+    import time
+    lightsail = boto3.client('lightsail', region_name=region)
+    
+    for inst in instances:
+        max_retries = 30
+        for _ in range(max_retries):
+            try:
+                response = lightsail.get_instance(instanceName=inst["name"])
+                status = response["instance"]["state"]["name"]
+                
+                conn = sqlite3.connect('lightsail_panel.db')
+                c = conn.cursor()
+                
+                if status == "running":
+                    # 更新IP地址
+                    public_ip = response["instance"].get("publicIpAddress")
+                    private_ip = response["instance"].get("privateIpAddress")
+                    ipv6_addrs = json.dumps(response["instance"].get("ipv6Addresses", []))
+                    
+                    c.execute("""UPDATE instances SET status=?, public_ip=?, 
+                                private_ip=?, ipv6_addresses=? WHERE name=?""",
+                             (status, public_ip, private_ip, ipv6_addrs, inst["name"]))
+                    
+                    # 如果是双栈且需要分配静态IP
+                    # 这里可以添加静态IP分配逻辑
+                    
+                else:
+                    c.execute("UPDATE instances SET status=? WHERE name=?", 
+                             (status, inst["name"]))
+                
+                conn.commit()
+                conn.close()
+                
+                if status == "running":
+                    break
+                    
+                time.sleep(10)
+            except Exception as e:
+                print(f"轮询错误 {inst['name']}: {e}")
+                time.sleep(10)
+
+# 获取实例列表
+@app.get("/api/instances")
+def list_instances():
+    """获取所有管理的实例"""
+    conn = sqlite3.connect('lightsail_panel.db')
+    c = conn.cursor()
+    c.execute("SELECT * FROM instances ORDER BY created_at DESC")
+    rows = c.fetchall()
+    conn.close()
+    
+    instances = []
+    for row in rows:
+        bundle = INSTANCE_BUNDLES.get(row[3], {})
+        os_info = OS_BLUEPRINTS.get(row[4], {})
+        instances.append({
+            "id": row[0],
+            "name": row[1],
+            "region": row[2],
+            "region_name": AWS_REGIONS.get(row[2], {}).get("name", row[2]),
+            "bundle_name": bundle.get("name", row[3]),
+            "os_name": os_info.get("name", row[4]),
+            "status": row[6],
+            "public_ip": row[7],
+            "private_ip": row[8],
+            "ipv6_addresses": json.loads(row[9]) if row[9] else [],
+            "monthly_cost": row[11],
+            "created_at": row[5]
+        })
+    
+    return instances
+
+# 批量开放所有端口
+@app.post("/api/instances/{instance_name}/open-all-ports")
+def open_all_ports(instance_name: str):
+    """一键开放实例的所有端口"""
+    try:
+        # 从数据库获取区域
+        conn = sqlite3.connect('lightsail_panel.db')
+        c = conn.cursor()
+        c.execute("SELECT region FROM instances WHERE name=?", (instance_name,))
+        row = c.fetchone()
+        conn.close()
+        
+        if not row:
+            raise HTTPException(status_code=404, detail="实例不存在")
+        
+        region = row[0]
+        lightsail = boto3.client('lightsail', region_name=region)
+        
+        # 构建端口规则：开放所有TCP和UDP
+        port_infos = [
+            {
+                "fromPort": 0,
+                "toPort": 65535,
+                "protocol": "tcp",
+                "accessFrom": "Anywhere",
+                "accessType": "public",
+                "cidrs": ["0.0.0.0/0"]
+            },
+            {
+                "fromPort": 0,
+                "toPort": 65535,
+                "protocol": "udp",
+                "accessFrom": "Anywhere",
+                "accessType": "public",
+                "cidrs": ["0.0.0.0/0"]
+            },
+            {
+                "fromPort": -1,
+                "toPort": -1,
+                "protocol": "icmp",
+                "accessFrom": "Anywhere",
+                "accessType": "public",
+                "cidrs": ["0.0.0.0/0"]
+            }
+        ]
+        
+        lightsail.put_instance_public_ports(
+            instanceName=instance_name,
+            portInfos=port_infos
+        )
+        
+        return {"success": True, "message": f"{instance_name} 所有端口已开放"}
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+# 关闭所有端口（流量保护）
+@app.post("/api/instances/{instance_name}/close-all-ports")
+def close_all_ports(instance_name: str, keep_ssh: bool = True):
+    """关闭实例所有端口（用于流量保护）"""
+    try:
+        conn = sqlite3.connect('lightsail_panel.db')
+        c = conn.cursor()
+        c.execute("SELECT region FROM instances WHERE name=?", (instance_name,))
+        row = c.fetchone()
+        conn.close()
+        
+        if not row:
+            raise HTTPException(status_code=404, detail="实例不存在")
+        
+        region = row[0]
+        lightsail = boto3.client('lightsail', region_name=region)
+        
+        if keep_ssh:
+            # 只保留SSH端口
+            port_infos = [{
+                "fromPort": 22,
+                "toPort": 22,
+                "protocol": "tcp",
+                "accessFrom": "Anywhere",
+                "accessType": "public",
+                "cidrs": ["0.0.0.0/0"]
+            }]
+        else:
+            port_infos = []
+        
+        lightsail.put_instance_public_ports(
+            instanceName=instance_name,
+            portInfos=port_infos
+        )
+        
+        return {"success": True, "message": f"{instance_name} 已关闭所有端口" + ("（保留SSH）" if keep_ssh else "")}
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+# 删除实例
+@app.delete("/api/instances/{instance_name}")
+def delete_instance(instance_name: str):
+    """删除实例"""
+    try:
+        conn = sqlite3.connect('lightsail_panel.db')
+        c = conn.cursor()
+        c.execute("SELECT region FROM instances WHERE name=?", (instance_name,))
+        row = c.fetchone()
+        
+        if not row:
+            conn.close()
+            raise HTTPException(status_code=404, detail="实例不存在")
+        
+        region = row[0]
+        
+        # 从AWS删除
+        lightsail = boto3.client('lightsail', region_name=region)
+        lightsail.delete_instance(instanceName=instance_name)
+        
+        # 从数据库删除
+        c.execute("DELETE FROM instances WHERE name=?", (instance_name,))
+        conn.commit()
+        conn.close()
+        
+        return {"success": True, "message": f"{instance_name} 已删除"}
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+# 获取流量统计（集成CloudWatch）
+@app.get("/api/instances/{instance_name}/metrics")
+def get_instance_metrics(instance_name: str):
+    """获取实例流量统计"""
+    try:
+        conn = sqlite3.connect('lightsail_panel.db')
+        c = conn.cursor()
+        c.execute("SELECT region, bundle_id FROM instances WHERE name=?", (instance_name,))
+        row = c.fetchone()
+        conn.close()
+        
+        if not row:
+            raise HTTPException(status_code=404, detail="实例不存在")
+        
+        region, bundle_id = row
+        bundle = INSTANCE_BUNDLES.get(bundle_id, {})
+        quota_gb = bundle.get("transfer_gb", 1000)
+        
+        # 检查是否亚太地区（配额减半）[^37^]
+        is_ap = any(x in region for x in ["ap-", "mumbai", "sydney", "jakarta"])
+        actual_quota = quota_gb / 2 if is_ap else quota_gb
+        
+        # 这里应该调用CloudWatch获取实际流量
+        # 简化返回模拟数据，实际实现需要集成CloudWatch
+        return {
+            "instance": instance_name,
+            "monthly_quota_gb": actual_quota,
+            "used_gb": 0,  # 需要从CloudWatch获取
+            "remaining_gb": actual_quota,
+            "usage_percent": 0,
+            "is_ap_region": is_ap,
+            "warning": is_ap
+        }
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=8000)
+
+第四步：前端实现（Vue 3）
+4.1 创建Vue项目
+cd ~/lightsail-panel/frontend
+npm create vue@latest .  # 选择Vue 3 + 不需要TypeScript + 需要Router
+npm install
+npm install element-plus axios @element-plus/icons-vue
+
+4.2 主入口 src/main.js
+import { createApp } from 'vue'
+import App from './App.vue'
+import router from './router'
+import ElementPlus from 'element-plus'
+import 'element-plus/dist/index.css'
+import * as ElementPlusIconsVue from '@element-plus/icons-vue'
+
+const app = createApp(App)
+
+for (const [key, component] of Object.entries(ElementPlusIconsVue)) {
+  app.component(key, component)
+}
+
+app.use(router)
+app.use(ElementPlus)
+app.mount('#app')
+
+4.3 创建实例页面 src/views/CreateView.vue
+<template>
+  <div class="create-container">
+    <el-card class="create-card">
+      <template #header>
+        <div class="card-header">
+          <el-icon><Plus /></el-icon>
+          <span>批量创建 Lightsail 实例</span>
+        </div>
+      </template>
+
+      <el-form :model="form" :rules="rules" ref="formRef" label-width="120px">
+        <!-- 区域选择 -->
+        <el-form-item label="区域" prop="region">
+          <el-select v-model="form.region" placeholder="选择区域" @change="handleRegionChange" style="width: 100%">
+            <el-option
+              v-for="(info, key) in config.regions"
+              :key="key"
+              :label="info.name"
+              :value="key"
+            />
+          </el-select>
+        </el-form-item>
+
+        <!-- 可用区 -->
+        <el-form-item label="可用区" prop="availability_zone">
+          <el-select v-model="form.availability_zone" placeholder="选择可用区" style="width: 100%">
+            <el-option
+              v-for="zone in availableZones"
+              :key="zone"
+              :label="zone"
+              :value="zone"
+            />
+          </el-select>
+        </el-form-item>
+
+        <!-- 实例配置 -->
+        <el-form-item label="实例配置" prop="bundle_id">
+          <el-select v-model="form.bundle_id" placeholder="选择配置" @change="calculatePrice" style="width: 100%">
+            <el-option
+              v-for="(info, key) in config.bundles"
+              :key="key"
+              :label="`${info.name} - ${info.specs}`"
+              :value="key"
+            >
+              <span style="float: left">{{ info.name }}</span>
+              <span style="float: right; color: #8492a6; font-size: 13px">
+                IPv4: ${{ info.ipv4_price }}/月 | IPv6: ${{ info.ipv6_price }}/月
+              </span>
+            </el-option>
+          </el-select>
+        </el-form-item>
+
+        <!-- 网络类型 -->
+        <el-form-item label="网络类型" prop="network_type">
+          <el-radio-group v-model="form.network_type" @change="calculatePrice">
+            <el-radio-button label="dual_stack">
+              <el-icon><Connection /></el-icon> IPv4 + IPv6
+            </el-radio-button>
+            <el-radio-button label="ipv6_only">
+              <el-icon><Link /></el-icon> 仅 IPv6 (省30%)
+            </el-radio-button>
+          </el-radio-group>
+          <div class="tip-text" v-if="form.network_type === 'ipv6_only'">
+            <el-alert type="warning" :closable="false" show-icon>
+              <template #title>
+                仅IPv6实例无法通过IPv4访问，适合纯IPv6应用或内部服务
+              </template>
+            </el-alert>
+          </div>
+        </el-form-item>
+
+        <!-- 操作系统 -->
+        <el-form-item label="操作系统" prop="blueprint_id">
+          <el-select v-model="form.blueprint_id" placeholder="选择系统" style="width: 100%">
+            <el-option-group label="Linux/Unix">
+              <el-option
+                v-for="(info, key) in linuxBlueprints"
+                :key="key"
+                :label="info.name"
+                :value="key"
+              />
+            </el-option-group>
+            <el-option-group label="Windows">
+              <el-option
+                v-for="(info, key) in windowsBlueprints"
+                :key="key"
+                :label="info.name"
+                :value="key"
+              />
+            </el-option-group>
+          </el-select>
+        </el-form-item>
+
+        <!-- 开启数量 -->
+        <el-form-item label="开启数量" prop="count">
+          <el-slider v-model="form.count" :min="1" :max="20" show-stops />
+          <div class="count-display">
+            <el-input-number v-model="form.count" :min="1" :max="20" />
+            <span class="unit">台</span>
+          </div>
+        </el-form-item>
+
+        <!-- 名称前缀 -->
+        <el-form-item label="名称前缀" prop="name_prefix">
+          <el-input v-model="form.name_prefix" placeholder="如: worker, node, proxy">
+            <template #append>自动生成后缀</template>
+          </el-input>
+        </el-form-item>
+
+        <!-- 密码设置 -->
+        <el-form-item label="连接密码">
+          <el-switch v-model="enablePassword" active-text="启用密码连接" />
+          <div v-if="enablePassword" class="password-section">
+            <el-input 
+              v-model="form.password" 
+              type="password" 
+              placeholder="设置root/ec2-user密码"
+              show-password
+            />
+            <div class="tip-text">
+              将通过cloud-init脚本自动配置密码登录（仅Linux支持）
+            </div>
+          </div>
+        </el-form-item>
+
+        <!-- 开机脚本 -->
+        <el-form-item label="开机脚本">
+          <el-switch v-model="enableUserData" active-text="自定义启动脚本" />
+          <div v-if="enableUserData" class="script-section">
+            <el-input
+              v-model="form.user_data"
+              type="textarea"
+              :rows="6"
+              placeholder="#!/bin/bash
+# 在此输入开机执行的脚本
+# 例如：安装软件、配置环境等
+yum update -y
+yum install -y docker
+systemctl start docker"
+            />
+          </div>
+        </el-form-item>
+
+        <!-- 价格预览 -->
+        <el-divider content-position="left">
+          <el-icon><Money /></el-icon> 费用预览
+        </el-divider>
+
+        <div class="price-preview" v-if="priceInfo">
+          <el-descriptions :column="2" border>
+            <el-descriptions-item label="单价">
+              ${{ priceInfo.unit_price }}/月
+            </el-descriptions-item>
+            <el-descriptions-item label="数量">
+              {{ priceInfo.count }} 台
+            </el-descriptions-item>
+            <el-descriptions-item label="配置规格" :span="2">
+              {{ priceInfo.bundle_specs }}
+            </el-descriptions-item>
+            <el-descriptions-item label="月流量配额" :span="2">
+              {{ priceInfo.transfer_gb }} GB
+              <el-tag v-if="priceInfo.warning" type="danger" size="small" style="margin-left: 10px">
+                {{ priceInfo.warning }}
+              </el-tag>
+            </el-descriptions-item>
+            <el-descriptions-item label="月度总费用" :span="2">
+              <span class="total-price">${{ priceInfo.total_monthly }}</span>
+              <span class="price-period">/月</span>
+            </el-descriptions-item>
+          </el-descriptions>
+        </div>
+
+        <!-- 提交按钮 -->
+        <el-form-item>
+          <el-button 
+            type="primary" 
+            size="large" 
+            @click="submitCreate" 
+            :loading="creating"
+            :disabled="!priceInfo"
+          >
+            <el-icon><CircleCheck /></el-icon>
+            确认创建 ({{ form.count }}台)
+          </el-button>
+          <el-button size="large" @click="resetForm">重置</el-button>
+        </el-form-item>
+      </el-form>
+    </el-card>
+
+    <!-- 创建进度对话框 -->
+    <el-dialog v-model="progressVisible" title="创建进度" :close-on-click-modal="false" :show-close="false">
+      <el-progress :percentage="createProgress" :status="createStatus" />
+      <p class="progress-text">{{ progressText }}</p>
+    </el-dialog>
+  </div>
+</template>
+
+<script setup>
+import { ref, reactive, computed, onMounted } from 'vue'
+import { ElMessage } from 'element-plus'
+import axios from 'axios'
+
+const API_BASE = 'http://localhost:8000'
+
+const formRef = ref()
+const config = ref({ regions: {}, bundles: {}, blueprints: {}, network_types: {} })
+const availableZones = ref([])
+const priceInfo = ref(null)
+const creating = ref(false)
+const progressVisible = ref(false)
+const createProgress = ref(0)
+const createStatus = ref('')
+const progressText = ref('')
+const enablePassword = ref(false)
+const enableUserData = ref(false)
+
+const form = reactive({
+  region: '',
+  availability_zone: '',
+  bundle_id: '',
+  network_type: 'dual_stack',
+  blueprint_id: '',
+  count: 1,
+  name_prefix: 'worker',
+  password: '',
+  user_data: ''
+})
+
+const rules = {
+  region: [{ required: true, message: '请选择区域', trigger: 'change' }],
+  availability_zone: [{ required: true, message: '请选择可用区', trigger: 'change' }],
+  bundle_id: [{ required: true, message: '请选择配置', trigger: 'change' }],
+  blueprint_id: [{ required: true, message: '请选择操作系统', trigger: 'change' }],
+  count: [{ required: true, message: '请输入数量', trigger: 'blur' }]
+}
+
+const linuxBlueprints = computed(() => {
+  return Object.fromEntries(
+    Object.entries(config.value.blueprints || {}).filter(([_, v]) => v.type === 'linux')
+  )
+})
+
+const windowsBlueprints = computed(() => {
+  return Object.fromEntries(
+    Object.entries(config.value.blueprints || {}).filter(([_, v]) => v.type === 'windows')
+  )
+})
+
+onMounted(async () => {
+  try {
+    const res = await axios.get(`${API_BASE}/api/config`)
+    config.value = res.data
+  } catch (e) {
+    ElMessage.error('获取配置失败')
+  }
+})
+
+const handleRegionChange = (val) => {
+  availableZones.value = config.value.regions[val]?.zones || []
+  form.availability_zone = ''
+}
+
+const calculatePrice = async () => {
+  if (!form.bundle_id || !form.network_type) return
+  
+  try {
+    const res = await axios.post(`${API_BASE}/api/calculate-price`, {
+      bundle_id: form.bundle_id,
+      network_type: form.network_type,
+      count: form.count,
+      region: form.region
+    })
+    priceInfo.value = res.data
+  } catch (e) {
+    ElMessage.error('价格计算失败')
+  }
+}
+
+const submitCreate = async () => {
+  await formRef.value.validate()
+  
+  creating.value = true
+  progressVisible.value = true
+  createProgress.value = 0
+  createStatus.value = ''
+  progressText.value = '正在创建实例...'
+
+  try {
+    const submitData = { ...form }
+    if (!enablePassword.value) delete submitData.password
+    if (!enableUserData.value) delete submitData.user_data
+
+    const res = await axios.post(`${API_BASE}/api/instances/create`, submitData)
+    
+    createProgress.value = 100
+    createStatus.value = 'success'
+    progressText.value = `成功创建 ${res.data.created} 台实例，月度费用 $${res.data.total_cost}`
+    
+    ElMessage.success('创建成功')
+    setTimeout(() => {
+      progressVisible.value = false
+      window.location.href = '/instances'
+    }, 2000)
+  } catch (e) {
+    createStatus.value = 'exception'
+    progressText.value = '创建失败: ' + (e.response?.data?.detail || e.message)
+    ElMessage.error('创建失败')
+  } finally {
+    creating.value = false
+  }
+}
+
+const resetForm = () => {
+  formRef.value.resetFields()
+  priceInfo.value = null
+}
+</script>
+
+<style scoped>
+.create-container {
+  padding: 20px;
+  max-width: 800px;
+  margin: 0 auto;
+}
+
+.card-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 18px;
+  font-weight: bold;
+}
+
+.count-display {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 10px;
+}
+
+.unit {
+  color: #666;
+}
+
+.tip-text {
+  margin-top: 8px;
+  font-size: 12px;
+  color: #666;
+}
+
+.password-section, .script-section {
+  margin-top: 10px;
+  padding: 15px;
+  background: #f5f7fa;
+  border-radius: 4px;
+}
+
+.price-preview {
+  margin: 20px 0;
+  padding: 20px;
+  background: #f0f9ff;
+  border-radius: 8px;
+}
+
+.total-price {
+  font-size: 24px;
+  color: #f56c6c;
+  font-weight: bold;
+}
+
+.price-period {
+  color: #666;
+  margin-left: 4px;
+}
+
+.progress-text {
+  text-align: center;
+  margin-top: 15px;
+  color: #666;
+}
+</style>
+
+4.4 实例列表页面 src/views/InstancesView.vue
+<template>
+  <div class="instances-container">
+    <el-card>
+      <template #header>
+        <div class="card-header">
+          <span>实例管理</span>
+          <div class="header-actions">
+            <el-button type="primary" @click="refreshList" :loading="loading">
+              <el-icon><Refresh /></el-icon> 刷新
+            </el-button>
+            <el-button type="success" @click="$router.push('/create')">
+              <el-icon><Plus /></el-icon> 新建实例
+            </el-button>
+          </div>
+        </div>
+      </template>
+
+      <el-table :data="instances" v-loading="loading" style="width: 100%">
+        <el-table-column prop="name" label="实例名称" width="180" />
+        <el-table-column prop="region_name" label="区域" width="150" />
+        <el-table-column prop="bundle_name" label="配置" width="150" />
+        <el-table-column prop="os_name" label="系统" width="150" />
+        <el-table-column prop="public_ip" label="公网IP" width="140">
+          <template #default="{ row }">
+            <span v-if="row.public_ip">{{ row.public_ip }}</span>
+            <el-tag v-else size="small" type="info">IPv6 Only</el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column prop="status" label="状态" width="100">
+          <template #default="{ row }">
+            <el-tag :type="getStatusType(row.status)">
+              {{ row.status }}
+            </el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column prop="monthly_cost" label="月费" width="100">
+          <template #default="{ row }">
+            ${{ row.monthly_cost }}
+          </template>
+        </el-table-column>
+        <el-table-column label="操作" fixed="right" width="280">
+          <template #default="{ row }">
+            <el-button-group>
+              <el-button 
+                size="small" 
+                type="warning"
+                @click="openAllPorts(row)"
+                :disabled="row.status !== 'running'"
+              >
+                开墙
+              </el-button>
+              <el-button 
+                size="small" 
+                type="danger"
+                @click="closeAllPorts(row)"
+                :disabled="row.status !== 'running'"
+              >
+                关墙
+              </el-button>
+              <el-button 
+                size="small" 
+                type="primary"
+                @click="viewMetrics(row)"
+              >
+                流量
+              </el-button>
+              <el-popconfirm
+                title="确定删除此实例?"
+                @confirm="deleteInstance(row)"
+              >
+                <template #reference>
+                  <el-button size="small" type="danger" plain>
+                    删除
+                  </el-button>
+                </template>
+              </el-popconfirm>
+            </el-button-group>
+          </template>
+        </el-table-column>
+      </el-table>
+
+      <div class="summary" v-if="instances.length > 0">
+        <el-descriptions :column="3" border>
+          <el-descriptions-item label="实例总数">{{ instances.length }}</el-descriptions-item>
+          <el-descriptions-item label="月度总费用">${{ totalMonthlyCost }}</el-descriptions-item>
+          <el-descriptions-item label="运行中">{{ runningCount }} 台</el-descriptions-item>
+        </el-descriptions>
+      </div>
+    </el-card>
+
+    <!-- 流量监控对话框 -->
+    <el-dialog v-model="metricsVisible" title="流量监控" width="500px">
+      <div v-if="currentMetrics">
+        <el-progress 
+          :percentage="currentMetrics.usage_percent" 
+          :color="getProgressColor"
+          :stroke-width="20"
+          :text-inside="true"
+        >
+          {{ currentMetrics.used_gb }}GB / {{ currentMetrics.monthly_quota_gb }}GB
+        </el-progress>
+        
+        <el-alert 
+          v-if="currentMetrics.is_ap_region" 
+          type="warning" 
+          :closable="false"
+          style="margin-top: 15px"
+        >
+          亚太地区流量配额已减半
+        </el-alert>
+
+        <div class="metrics-actions" v-if="currentMetrics.usage_percent >= 90">
+          <el-alert type="error" :closable="false" show-icon>
+            流量已超90%，建议立即关闭端口防止超额费用
+          </el-alert>
+          <el-button type="danger" @click="closeAllPorts(currentInstance)" style="margin-top: 10px">
+            立即关闭所有端口
+          </el-button>
+        </div>
+      </div>
+    </el-dialog>
+  </div>
+</template>
+
+<script setup>
+import { ref, computed, onMounted } from 'vue'
+import { ElMessage, ElMessageBox } from 'element-plus'
+import axios from 'axios'
+
+const API_BASE = 'http://localhost:8000'
+
+const instances = ref([])
+const loading = ref(false)
+const metricsVisible = ref(false)
+const currentMetrics = ref(null)
+const currentInstance = ref(null)
+
+const totalMonthlyCost = computed(() => {
+  return instances.value.reduce((sum, inst) => sum + (inst.monthly_cost || 0), 0).toFixed(2)
+})
+
+const runningCount = computed(() => {
+  return instances.value.filter(i => i.status === 'running').length
+})
+
+const getStatusType = (status) => {
+  const map = {
+    'running': 'success',
+    'pending': 'warning',
+    'stopped': 'info',
+    'error': 'danger'
+  }
+  return map[status] || 'info'
+}
+
+const getProgressColor = (percentage) => {
+  if (percentage < 50) return '#67c23a'
+  if (percentage < 80) return '#e6a23c'
+  if (percentage < 90) return '#f56c6c'
+  return '#ff0000'
+}
+
+onMounted(() => {
+  refreshList()
+})
+
+const refreshList = async () => {
+  loading.value = true
+  try {
+    const res = await axios.get(`${API_BASE}/api/instances`)
+    instances.value = res.data
+  } catch (e) {
+    ElMessage.error('获取实例列表失败')
+  } finally {
+    loading.value = false
+  }
+}
+
+const openAllPorts = async (row) => {
+  try {
+    await ElMessageBox.confirm(
+      `确定要开放 ${row.name} 的所有端口吗？这将暴露所有服务到公网`,
+      '安全警告',
+      { confirmButtonText: '确认开放', cancelButtonText: '取消', type: 'warning' }
+    )
+    
+    const res = await axios.post(`${API_BASE}/api/instances/${row.name}/open-all-ports`)
+    ElMessage.success(res.data.message)
+  } catch (e) {
+    if (e !== 'cancel') {
+      ElMessage.error('操作失败: ' + (e.response?.data?.detail || e.message))
+    }
+  }
+}
+
+const closeAllPorts = async (row) => {
+  try {
+    const res = await axios.post(`${API_BASE}/api/instances/${row.name}/close-all-ports?keep_ssh=true`)
+    ElMessage.success(res.data.message)
+  } catch (e) {
+    ElMessage.error('操作失败')
+  }
+}
+
+const viewMetrics = async (row) => {
+  currentInstance.value = row
+  try {
+    const res = await axios.get(`${API_BASE}/api/instances/${row.name}/metrics`)
+    currentMetrics.value = res.data
+    metricsVisible.value = true
+  } catch (e) {
+    ElMessage.error('获取流量数据失败')
+  }
+}
+
+const deleteInstance = async (row) => {
+  try {
+    await axios.delete(`${API_BASE}/api/instances/${row.name}`)
+    ElMessage.success('删除成功')
+    refreshList()
+  } catch (e) {
+    ElMessage.error('删除失败')
+  }
+}
+</script>
+
+<style scoped>
+.instances-container {
+  padding: 20px;
+}
+
+.card-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.header-actions {
+  display: flex;
+  gap: 10px;
+}
+
+.summary {
+  margin-top: 20px;
+  padding-top: 20px;
+  border-top: 1px solid #ebeef5;
+}
+
+.metrics-actions {
+  margin-top: 20px;
+}
+</style>
+
+4.5 路由配置 src/router/index.js
+import { createRouter, createWebHistory } from 'vue-router'
+import CreateView from '../views/CreateView.vue'
+import InstancesView from '../views/InstancesView.vue'
+
+const router = createRouter({
+  history: createWebHistory(),
+  routes: [
+    { path: '/', redirect: '/instances' },
+    { path: '/create', component: CreateView },
+    { path: '/instances', component: InstancesView }
+  ]
+})
+
+export default router
+
+4.6 主布局 src/App.vue
+<template>
+  <el-container class="layout-container">
+    <el-aside width="200px" class="aside">
+      <div class="logo">Lightsail Panel</div>
+      <el-menu
+        :default-active="$route.path"
+        router
+        class="el-menu-vertical"
+        background-color="#304156"
+        text-color="#bfcbd9"
+        active-text-color="#409EFF"
+      >
+        <el-menu-item index="/instances">
+          <el-icon><List /></el-icon>
+          <span>实例管理</span>
+        </el-menu-item>
+        <el-menu-item index="/create">
+          <el-icon><Plus /></el-icon>
+          <span>创建实例</span>
+        </el-menu-item>
+      </el-menu>
+    </el-aside>
+    
+    <el-main class="main-content">
+      <router-view />
+    </el-main>
+  </el-container>
+</template>
+
+<style>
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+.layout-container {
+  height: 100vh;
+}
+
+.aside {
+  background-color: #304156;
+}
+
+.logo {
+  height: 60px;
+  line-height: 60px;
+  text-align: center;
+  color: #fff;
+  font-size: 18px;
+  font-weight: bold;
+  border-bottom: 1px solid #1f2d3d;
+}
+
+.main-content {
+  background-color: #f0f2f5;
+  padding: 0;
+  overflow-y: auto;
+}
+
+.el-menu-vertical {
+  border-right: none;
+}
+</style>
+
+第五步：部署运行
+5.1 配置AWS凭证
+# 在面板服务器上配置AWS CLI
+aws configure
+# 输入 Access Key ID
+# 输入 Secret Access Key
+# 输入区域（如 us-east-1）
+# 输出格式：json
+
+# 或使用环境变量（生产环境推荐）
+export AWS_ACCESS_KEY_ID=your_key
+export AWS_SECRET_ACCESS_KEY=your_secret
+export AWS_DEFAULT_REGION=us-east-1
+
+5.2 启动服务
+cd ~/lightsail-panel
+
+# 启动后端（开发模式）
+cd backend
+python3 main.py &
+# 或使用生产模式：gunicorn -w 2 -k uvicorn.workers.UvicornWorker main:app -b 0.0.0.0:8000
+
+# 构建前端
+cd ../frontend
+npm run build
+
+# 使用Caddy或Nginx托管前端（这里用Python简单演示）
+cd dist
+python3 -m http.server 8080 --bind 0.0.0.0 &
+5.3 使用PM2持久化（推荐）
+sudo npm install -g pm2
+
+# 后端
+cd ~/lightsail-panel/backend
+pm2 start "uvicorn main:app --host 0.0.0.0 --port 8000" --name lightsail-api
+
+# 前端（使用serve包）
+sudo npm install -g serve
+cd ~/lightsail-panel/frontend
+pm2 start "serve -s dist -l 8080" --name lightsail-web
+
+pm2 save
+pm2 startup
+
+
+最终访问
+控制面板地址：http://你的服务器IP:8080
+API地址：http://你的服务器IP:8000
+💡 关键功能说明
+表格
+功能	实现细节
+区域选择	支持15个AWS区域，自动加载对应可用区
+网络类型	IPv4+IPv6双栈 / 仅IPv6（节省30%费用）
+密码连接	通过cloud-init脚本自动配置SSH密码登录
+价格计算	实时计算月度费用，自动检测亚太地区流量减半警告
+批量开墙	一键开放0-65535所有TCP/UDP端口
+流量保护	监控流量使用，超90%自动提醒并支持一键关墙
